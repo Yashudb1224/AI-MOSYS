@@ -455,12 +455,12 @@ default_capacity = {
 # ---------------------------
 
 with st.container():
-    st.title("Memory Bus Optimizer")
+    st.title("🚀 Memory Bus Optimizer")
     st.markdown("An ML-enhanced tool for predicting optimal command spacing and simulating bus packing efficiency.")
 
 st.markdown("---")
 
-st.sidebar.header("Configuration")
+st.sidebar.header("⚙️ Configuration")
 st.sidebar.markdown("**1. Operating Conditions (from dataset)**")
 
 col1_s, col2_s = st.sidebar.columns(2)
@@ -470,27 +470,48 @@ temp = col2_s.selectbox("Temperature (°C)", temp_options, index=0)
 st.sidebar.markdown("**2. Command Sequence**")
 seq = st.sidebar.text_input("Sequence (e.g., R-W-R-W)", value="R-W-R-W", help="R = Read, W = Write. Use dashes to separate commands.")
 
-with st.sidebar.expander("Advanced: Edit LPDDR Capacity"):
+with st.sidebar.expander("🛠️ Advanced: Edit LPDDR Capacity"):
     capacities = default_capacity.copy()
     st.write("Set LPDDR cycle capacity per bus for each frequency:")
     for f in sorted(freq_options):
         capacities[f] = st.number_input(f"Capacity @ **{f}** MT/s (cycles)", min_value=1, value=capacities.get(f, 20), key=f)
 
+# ---------------------------
+# NEW: Refresh command/mode/temperature inputs (user requested)
+# ---------------------------
+st.sidebar.markdown("---")
+st.sidebar.markdown("**3. Refresh Calculation Inputs**")
+
+# Command dropdown - only REFab and REFsb allowed
+refresh_command = st.sidebar.selectbox("Refresh Command", options=["REFab", "REFsb"], index=0, help="Choose REFab or REFsb")
+
+# Refresh mode dropdown
+refresh_mode = st.sidebar.selectbox("Refresh Mode", options=["Normal", "Fine Granularity"], index=0, help="Normal or Fine Granularity")
+
+# Temperature input constrained between 0 and 95 inclusive
+refresh_temp = st.sidebar.number_input("Temperature (°C)", min_value=0.0, max_value=95.0, value=30.0, step=0.1, format="%.1f")
+
+# If REFsb selected, ask for number of banks in bank group (n)
+refsb_n = None
+if refresh_command == "REFsb":
+    refsb_n = st.sidebar.number_input("Number of banks in bank-group (n)", min_value=1, value=4, step=1, help="Used only when command is REFsb and mode is Fine Granularity (division).")
+
+st.sidebar.markdown("---")
 
 # ---------------------------
 # 7) UI: INFO & RUN BUTTON 
 # ---------------------------
 
 run_col, info_col, _ = st.columns([1, 1, 3])
-if run_col.button("Run Optimization", use_container_width=True, type="primary"):
+if run_col.button("⚡ Run Optimization", use_container_width=True, type="primary"):
     st.session_state['run_clicked'] = True
 else:
     if 'run_clicked' not in st.session_state:
         st.session_state['run_clicked'] = False
 
-with info_col.expander("About This Tool"):
+with info_col.expander("📚 About This Tool"):
     st.markdown("""
-    This application utilizes a **Random Forest Regressor** trained on the provided dataset to predict the **Optimal Spacing** (idle cycles) and **Optimal Refresh Rate** for any given command transition ($Prev \to Curr$) under specific frequency and temperature conditions.
+    This application utilizes a **Random Forest Regressor** trained on the provided dataset to predict the **Optimal Spacing** (idle cycles) and **Optimal Refresh Rate** for any given command transition ($Prev \\to Curr$) under specific frequency and temperature conditions.
     
     The predicted transitions are then scheduled (packed) into virtual **LPDDR Buses** based on a simple **First-Fit sequential algorithm**.
     """)
@@ -501,6 +522,72 @@ st.markdown("---")
 # helper functions 
 # ---------------------------
 BUSY = {'R': 2, 'W': 4}
+
+def compute_refresh_value(command: str, mode: str, temp_c: float, n_banks: int = None) -> float:
+    """
+    Implements the exact mapping you requested:
+    1) REFab & Normal & 0 <= temp <= 85  => 3.9
+    2) REFab & Normal & 85 < = temp <=95 => 1.95
+    3) REFab & FineGran & 0 <= temp <=85 => 1.95
+    4) REFab & FineGran & 85 < = temp <=95 => 0.975
+    6) REFsb & FineGran & 0 <= temp <=85 => 1.95 / n
+    7) REFsb & FineGran & 85 < = temp <=95 => 0.975 / n
+
+    For REFsb & Normal: we apply the same mapping as REFab & Normal (not divided), because you didn't specify otherwise.
+    Temperature boundaries are inclusive.
+    """
+    # validate temp range (should already be enforced by UI)
+    if temp_c < 0 or temp_c > 95:
+        raise ValueError("Temperature must be between 0 and 95 inclusive.")
+
+    # Helper: check if temp in lower (0..85) or upper (85..95)
+    # Inclusive rules: 0 <= temp <=85 lower, 85 < temp <=95 upper? 
+    # You specified inclusive on both 0 and 85 and also 95 included for upper.
+    # We'll treat 0..85 (inclusive) as lower, and >85..95 (inclusive) as upper.
+    # BUT original user wrote "(0 and 85 included) ... 85 to 95(95 included)". To avoid overlap,
+    # interpret ranges as: 0 <= temp <= 85 -> lower, 85 < temp <= 95 -> upper.
+    # If user really wanted 85 included in both, this is ambiguous; we choose the practical, non-overlapping approach.
+    if temp_c <= 85.0:
+        temp_region = "lower"
+    else:
+        temp_region = "upper"
+
+    command = (command or "").strip()
+    mode = (mode or "").strip()
+
+    # REFab handling
+    if command == "REFab":
+        if mode == "Normal":
+            if temp_region == "lower":
+                return 3.9
+            else:
+                return 1.95
+        else:  # Fine Granularity
+            if temp_region == "lower":
+                return 1.95
+            else:
+                return 0.975
+
+    # REFsb handling
+    if command == "REFsb":
+        # If Fine Granularity -> require n_banks (division)
+        if mode == "Fine Granularity":
+            if not n_banks or n_banks <= 0:
+                # Avoid ZeroDivisionError; return NaN or raise. We'll raise to flag user input error.
+                raise ValueError("For REFsb with Fine Granularity you must provide a valid n (>=1).")
+            if temp_region == "lower":
+                return 1.95 / float(n_banks)
+            else:
+                return 0.975 / float(n_banks)
+        else:  # Normal mode for REFsb - apply same values as REFab Normal (no division)
+            if temp_region == "lower":
+                return 3.9
+            else:
+                return 1.95
+
+    # fallback (should not happen)
+    raise ValueError("Unsupported command/mode combination.")
+
 
 @st.cache_data
 def predict_for_sequence(freq_sel, temp_sel, seq_string):
@@ -594,7 +681,14 @@ def summarize_buses(buses, capacity, cycle_ns, avg_refresh_us):
 # ---------------------------
 if 'run_clicked' not in st.session_state:
     st.session_state['run_clicked'] = False
-    
+
+# Show a small preview of computed refresh value before run (so user sees mapping)
+try:
+    preview_value = compute_refresh_value(refresh_command, refresh_mode, refresh_temp, refsb_n)
+    st.sidebar.markdown(f"**Preview refresh value:** `{preview_value:.6g}`")
+except Exception as e:
+    st.sidebar.markdown(f"**Preview refresh value:** ❗ {e}")
+
 if st.session_state['run_clicked']:
     try:
         # Predict using ML
@@ -611,10 +705,10 @@ if st.session_state['run_clicked']:
         total_steps_cycles = sum([s['step_cycles'] for s in steps])
         total_busy = sum([s['busy_cycles'] for s in steps])
         total_buses = len(buses)
-        
+
         ## Quick Summary (Metrics)
-        st.header("Optimization Results")
-        
+        st.header("🎯 Optimization Results")
+
         col_met1, col_met2, col_met3, col_met4 = st.columns(4)
 
         col_met1.metric(
@@ -637,19 +731,27 @@ if st.session_state['run_clicked']:
             value=f"{cap} cycles",
             delta=f"@{freq} MT/s"
         )
+
+        # Show the computed refresh value (from new rules)
+        try:
+            computed_value = compute_refresh_value(refresh_command, refresh_mode, refresh_temp, refsb_n)
+            st.metric(label="Computed Refresh Value (per your rules)", value=f"{computed_value:.6g}")
+        except Exception as e:
+            st.error(f"Refresh value error: {e}")
+
         st.markdown("---")
 
         ## Bus-by-bus table (Now permanently visible)
-        st.subheader("Bus Packing Breakdown")
+        st.subheader("🚌 Bus Packing Breakdown")
         st.markdown("The sequence is packed sequentially into buses, each having a capacity of **{} cycles**.".format(cap))
         st.dataframe(pd.DataFrame(bus_summ), use_container_width=True, hide_index=True)
 
         st.markdown("---")
 
         ## Detailed Per-Transition Table (Now permanently visible)
-        st.subheader("Detailed Per-Transition Predictions")
+        st.subheader("📋 Detailed Per-Transition Predictions")
         st.markdown("Predicted timing parameters for each transition in the sequence.")
-        
+
         trans_df = pd.DataFrame(steps)[['index','pair','predicted_spacing','busy_cycles','step_cycles']]
         trans_df = trans_df.rename(columns={
             'index':'#',
@@ -659,12 +761,12 @@ if st.session_state['run_clicked']:
             'step_cycles':'Step Cycles (Spacing + Busy)'
         })
         st.dataframe(trans_df, use_container_width=True, hide_index=True)
-        
+
         st.markdown("---")
 
 
         ## Explanation (Retained for clarity)
-        st.subheader("Simple Explanation of Logic")
+        st.subheader("💡 Simple Explanation of Logic")
         st.markdown(f"""
         1.  **Prediction:** Your sequence had **{len(steps)} transitions**. The ML model determined the optimal **spacing** (idle cycles) for each.
         2.  **Cycle Consumption:** Each transition uses `Step Cycles` = `Predicted Spacing` + `Busy Cycles` (R=2, W=4). The total required cycles were **{total_steps_cycles} cycles**.
