@@ -455,12 +455,12 @@ default_capacity = {
 # ---------------------------
 
 with st.container():
-    st.title("🚀 Memory Bus Optimizer")
+    st.title("Memory Bus Optimizer")
     st.markdown("An ML-enhanced tool for predicting optimal command spacing and simulating bus packing efficiency.")
 
 st.markdown("---")
 
-st.sidebar.header("⚙️ Configuration")
+st.sidebar.header("Configuration")
 st.sidebar.markdown("**1. Operating Conditions (from dataset)**")
 
 col1_s, col2_s = st.sidebar.columns(2)
@@ -470,7 +470,7 @@ temp = col2_s.selectbox("Temperature (°C)", temp_options, index=0)
 st.sidebar.markdown("**2. Command Sequence**")
 seq = st.sidebar.text_input("Sequence (e.g., R-W-R-W)", value="R-W-R-W", help="R = Read, W = Write. Use dashes to separate commands.")
 
-with st.sidebar.expander("🛠️ Advanced: Edit LPDDR Capacity"):
+with st.sidebar.expander("Advanced: Edit LPDDR Capacity"):
     capacities = default_capacity.copy()
     st.write("Set LPDDR cycle capacity per bus for each frequency:")
     for f in sorted(freq_options):
@@ -482,13 +482,13 @@ with st.sidebar.expander("🛠️ Advanced: Edit LPDDR Capacity"):
 # ---------------------------
 
 run_col, info_col, _ = st.columns([1, 1, 3])
-if run_col.button("⚡ Run Optimization", use_container_width=True, type="primary"):
+if run_col.button("Run Optimization", use_container_width=True, type="primary"):
     st.session_state['run_clicked'] = True
 else:
     if 'run_clicked' not in st.session_state:
         st.session_state['run_clicked'] = False
 
-with info_col.expander("📚 About This Tool"):
+with info_col.expander("About This Tool"):
     st.markdown("""
     This application utilizes a **Random Forest Regressor** trained on the provided dataset to predict the **Optimal Spacing** (idle cycles) and **Optimal Refresh Rate** for any given command transition ($Prev \to Curr$) under specific frequency and temperature conditions.
     
@@ -613,7 +613,7 @@ if st.session_state['run_clicked']:
         total_buses = len(buses)
         
         ## Quick Summary (Metrics)
-        st.header("🎯 Optimization Results")
+        st.header("Optimization Results")
         
         col_met1, col_met2, col_met3, col_met4 = st.columns(4)
 
@@ -640,14 +640,14 @@ if st.session_state['run_clicked']:
         st.markdown("---")
 
         ## Bus-by-bus table (Now permanently visible)
-        st.subheader("🚌 Bus Packing Breakdown")
+        st.subheader("Bus Packing Breakdown")
         st.markdown("The sequence is packed sequentially into buses, each having a capacity of **{} cycles**.".format(cap))
         st.dataframe(pd.DataFrame(bus_summ), use_container_width=True, hide_index=True)
 
         st.markdown("---")
 
         ## Detailed Per-Transition Table (Now permanently visible)
-        st.subheader("📋 Detailed Per-Transition Predictions")
+        st.subheader("Detailed Per-Transition Predictions")
         st.markdown("Predicted timing parameters for each transition in the sequence.")
         
         trans_df = pd.DataFrame(steps)[['index','pair','predicted_spacing','busy_cycles','step_cycles']]
@@ -664,7 +664,7 @@ if st.session_state['run_clicked']:
 
 
         ## Explanation (Retained for clarity)
-        st.subheader("💡 Simple Explanation of Logic")
+        st.subheader("Simple Explanation of Logic")
         st.markdown(f"""
         1.  **Prediction:** Your sequence had **{len(steps)} transitions**. The ML model determined the optimal **spacing** (idle cycles) for each.
         2.  **Cycle Consumption:** Each transition uses `Step Cycles` = `Predicted Spacing` + `Busy Cycles` (R=2, W=4). The total required cycles were **{total_steps_cycles} cycles**.
