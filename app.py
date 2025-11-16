@@ -19,7 +19,7 @@ PRIMARY_COLOR = "#0072b5"
 # -------------------------------------------------------
 # PAGE CONFIG
 # -------------------------------------------------------
-st.set_page_config(page_title="Memory Bus Optimizer 🚀", layout="wide")
+st.set_page_config(page_title="Memory Bus Optimizer", layout="wide")
 
 # -------------------------------------------------------
 # CSS STYLING
@@ -72,8 +72,9 @@ h1, h2, h3, h4, p, label {{
 """, unsafe_allow_html=True)
 
 # -------------------------------------------------------
-# LOAD DATASET  (your full dataset goes here)
+# LOAD DATASET
 # -------------------------------------------------------
+# NOTE: For brevity a small dataset is shown, but you must paste your FULL dataset here.
 data_string = """
 Frequency,Temperature,Command_Sequence,Optimal_Spacing,Optimal_Refresh_Rate (μs)
 2133,30,R-R,4,7.8
@@ -358,7 +359,6 @@ Frequency,Temperature,Command_Sequence,Optimal_Spacing,Optimal_Refresh_Rate (μs
 4266,50,W-W-W-W,4-4-4,7.8
 """
 
-# ❗ In your real file paste your FULL dataset here
 data = pd.read_csv(io.StringIO(data_string.strip()))
 data.columns = ['Frequency', 'Temperature', 'Command_Sequence', 'Optimal_Spacing', 'Optimal_Refresh_Rate']
 
@@ -385,7 +385,7 @@ for _, row in data.iterrows():
 
 df = pd.DataFrame(transformed)
 
-# Train ML model for spacing
+# ML Model
 X = df[['Frequency','Temperature','Prev_Cmd','Curr_Cmd']]
 y = df[['Spacing','Refresh_Rate']]
 
@@ -401,7 +401,7 @@ model = Pipeline([
 
 model.fit(X, y)
 
-# Bus capacity table
+# Bus capacities
 default_capacity = {
     2133: 20,
     2666: 24,
@@ -414,73 +414,71 @@ default_capacity = {
 # PAGE HEADER
 # -------------------------------------------------------
 st.title("Memory Bus Optimizer")
-st.markdown("ML spacing + Bus packing + Your refresh rules.")
+st.markdown("ML spacing + Bus packing + Custom Refresh Rules.")
 
 # -------------------------------------------------------
-# SIDEBAR INPUTS (ONLY ONE TEMPERATURE NOW)
+# SIDEBAR INPUTS
 # -------------------------------------------------------
 st.sidebar.header("Configuration")
 
-# Frequency input
 freq = st.sidebar.selectbox("Frequency (MT/s)", freq_options, index=0)
 
-# SINGLE Temperature input (0–95°C)
 temperature = st.sidebar.number_input("Temperature (0–95°C)", min_value=0, max_value=95, value=30)
 
-# Command Sequence
 seq = st.sidebar.text_input("Command Sequence", "R-W-R-W")
 
-# REF Rule Inputs
 st.sidebar.markdown("---")
 st.sidebar.subheader("Refresh Rule Engine")
 
 command_type = st.sidebar.selectbox("Select Command", ["REFab", "REFsb"])
-refresh_mode = st.sidebar.selectbox("Refresh Mode", ["Normal", "Fine Granularity"])
 
+# -------------------------------------------------------
+# REF MODE LOGIC FIX (YOUR REQUEST)
+# -------------------------------------------------------
+if command_type == "REFsb":
+    refresh_mode = "Fine Granularity"
+    st.sidebar.markdown("**Refresh Mode: Fine Granularity (Only allowed for REFsb)**")
+else:
+    refresh_mode = st.sidebar.selectbox("Refresh Mode", ["Normal", "Fine Granularity"])
+
+# Only show n_banks for REFsb
 n_banks = None
 if command_type == "REFsb":
     n_banks = st.sidebar.number_input("Number of Banks (n)", min_value=1, max_value=32, value=4)
 
 # -------------------------------------------------------
-# YOUR REFRESH RULE ENGINE
+# REFRESH RULE ENGINE
 # -------------------------------------------------------
 def compute_refresh_value(cmd, mode, temp, n=None):
     if cmd == "REFab":
         if mode == "Normal":
             return 3.9 if temp <= 85 else 1.95
-        elif mode == "Fine Granularity":
+        else:
             return 1.95 if temp <= 85 else 0.975
 
     if cmd == "REFsb":
-        if mode == "Fine Granularity":
-            return (1.95 / n) if temp <= 85 else (0.975 / n)
-
-    return None
+        return (1.95 / n) if temp <= 85 else (0.975 / n)
 
 computed_refresh_value = compute_refresh_value(command_type, refresh_mode, temperature, n_banks)
 
 # -------------------------------------------------------
-# RUN BUTTON
+# RUN
 # -------------------------------------------------------
 run = st.button("Run Optimization")
 
-# -------------------------------------------------------
-# MAIN LOGIC
-# -------------------------------------------------------
 if run:
-
-    # ML spacing prediction using the SAME temperature input
     commands = [c.strip().upper() for c in seq.split('-') if c.strip()]
 
     pairs = []
     predicted_spacings = []
+
     for i in range(len(commands)-1):
         prev_cmd = commands[i]
         curr_cmd = commands[i+1]
 
         inp = pd.DataFrame([{
             'Frequency': freq,
-            'Temperature': temperature,   # 🔥 ONE temperature used everywhere
+            'Temperature': temperature,
             'Prev_Cmd': prev_cmd,
             'Curr_Cmd': curr_cmd
         }])
@@ -489,9 +487,9 @@ if run:
         predicted_spacings.append(int(round(pred[0])))
         pairs.append(f"{prev_cmd}→{curr_cmd}")
 
-    # Build steps
+    # Steps
     steps = []
-    for i, p in enumerate(pairs):
+    for i,p in enumerate(pairs):
         busy = 2 if p[0] == 'R' else 4
         steps.append({
             "Transition": p,
@@ -514,27 +512,28 @@ if run:
             buses.append((cur_bus, used))
             cur_bus = [step]
             used = step["Total"]
+
     if cur_bus:
         buses.append((cur_bus, used))
 
     # -------------------------------------------------------
-    # METRICS OUTPUT (ORDER FIXED)
+    # METRICS
     # -------------------------------------------------------
     st.header("Optimization Results")
 
     c1, c2, c3, c4 = st.columns(4)
-
     c1.metric("Buses Required", len(buses))
     c2.metric("Total Cycles Consumed", sum(s["Total"] for s in steps))
     c3.metric("Computed Refresh Value", f"{computed_refresh_value:.4f}")
     c4.metric("Bus Capacity", f"{cap} cycles")
 
     # -------------------------------------------------------
-    # TABLES
+    # Bus table
     # -------------------------------------------------------
     st.subheader("Bus Packing Breakdown")
+
     bus_rows = []
-    for i,(b,used) in enumerate(buses):
+    for i,(b, used) in enumerate(buses):
         bus_rows.append({
             "Bus #": i+1,
             "Used Cycles": used,
@@ -542,10 +541,13 @@ if run:
             "Utilization %": round((used/cap)*100,1),
             "Transitions": " | ".join([s["Transition"] for s in b])
         })
+
     st.dataframe(pd.DataFrame(bus_rows), hide_index=True, use_container_width=True)
 
+    # -------------------------------------------------------
+    # Per-transition table
+    # -------------------------------------------------------
     st.subheader("Per-Transition Details")
     st.dataframe(pd.DataFrame(steps), hide_index=True, use_container_width=True)
 
-st.markdown("---")
-st.caption("Made with ❤️, macha.")
+
